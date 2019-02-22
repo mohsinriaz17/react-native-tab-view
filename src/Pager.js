@@ -39,10 +39,8 @@ const {
 const TRUE = 1;
 const FALSE = 0;
 const NOOP = 0;
-const UNSET = -1;
 
-const DIRECTION_LEFT = 1;
-const DIRECTION_RIGHT = -1;
+const UNSET = -1;
 
 const SWIPE_DISTANCE_MINIMUM = 20;
 const SWIPE_DISTANCE_MULTIPLIER = 1 / 1.75;
@@ -61,28 +59,21 @@ const TIMING_CONFIG = {
   easing: Easing.out(Easing.cubic),
 };
 
-type Props<T: Route> = {|
+type Props<T: Route> = {
   swipeEnabled: boolean,
   swipeDistanceThreshold?: number,
   swipeVelocityThreshold: number,
-  onIndexChange: (index: number) => mixed,
+  jumpToIndex: (index: number) => mixed,
   navigationState: NavigationState<T>,
   layout: Layout,
-  children: (props: {|
-    // Animated value which represents the state of current index
-    // It can include fractional digits as it represents the intermediate value
+  children: (props: {
     position: Animated.Node<number>,
-    // Function to actually render the content of the pager
-    // The parent component takes care of rendering
     render: (children: React.Node) => React.Node,
-    // Add a listener to listen for position updates
     addListener: (listener: Listener) => void,
-    // Remove a position listener
     removeListener: (listener: Listener) => void,
-    // Immediately switch to a tab regardless of the navigation state
     jumpToIndex: (index: number) => void,
-  |}) => React.Node,
-|};
+  }) => React.Node,
+};
 
 export default class Pager<T: Route> extends React.Component<Props<T>> {
   static defaultProps = {
@@ -92,7 +83,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
   componentDidUpdate(prevProps: Props<T>) {
     const { index } = this.props.navigationState;
 
-    if (index !== this._currentIndexValue) {
+    if (index !== this._currentIndex) {
       this._jumpToIndex(index);
     }
 
@@ -132,7 +123,6 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
     }
   }
 
-  // Clock used for tab transition animations
   _clock = new Clock();
 
   // Current state of the gesture
@@ -144,7 +134,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
   // Current position of the page (translateX value)
   _position = new Value(
     // Intial value is based on the index and page width
-    this.props.navigationState.index * this.props.layout.width * DIRECTION_RIGHT
+    -this.props.navigationState.index * this.props.layout.width
   );
 
   // Initial index of the tabs
@@ -157,8 +147,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
   _isSwiping = new Value(FALSE);
 
   // Whether the update was due to swipe gesture
-  // This controls whether the transition will use a spring or timing animation
-  // Remember to set it before transition needs to occur
+  // Remember to set it when transition needs to occur
   _isSwipeGesture = new Value(FALSE);
 
   // Mappings to some prop values
@@ -166,7 +155,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
   _routesLength = new Value(this.props.navigationState.routes.length);
   _layoutWidth = new Value(this.props.layout.width);
 
-  // Threshold values to determine when to trigger a swipe gesture
+  // Thresholde values to determine when to trigger a swipe gesture
   _swipeDistanceThreshold = new Value(this.props.swipeDistanceThreshold || 180);
   _swipeVelocityThreshold = new Value(this.props.swipeVelocityThreshold);
 
@@ -174,12 +163,10 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
   // To avoid unnecessary traffic through the bridge, don't add listeners unless needed
   _isListening = new Value(FALSE);
 
-  // The current index change caused by the pager's animation
-  // The pager is used as a controlled component
-  // We need to keep track of the index to determine when to trigger animation
-  // The state will change at various points, we should only respond when we are out of sync
-  // This will ensure smoother animation and avoid weird glitches
-  _currentIndexValue = this.props.navigationState.index;
+  // The current index change caused by the pager's animation end
+  // We store this to skip triggering another transition after state update
+  // Otherwise there can be weird glitches when tabs switch quickly
+  _currentIndex = this.props.navigationState.index;
 
   // Listeners for the animated value
   _positionListeners: Listener[] = [];
@@ -208,9 +195,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
   };
 
   _handlePositionChange = ([translateX]: [number]) => {
-    // The position value is calculated based on the translate value
-    // If we don't have the layout yet, we should return the current index
-    const value = this.props.layout.width
+    let value = this.props.layout.width
       ? Math.abs(translateX / this.props.layout.width)
       : this.props.navigationState.index;
 
@@ -231,7 +216,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
       cond(clockRunning(this._clock), NOOP, [
         // Animation wasn't running before
         // Set the initial values and start the clock
-        set(toValue, multiply(index, this._layoutWidth, DIRECTION_RIGHT)),
+        set(toValue, multiply(index, this._layoutWidth, -1)),
         set(frameTime, 0),
         set(state.time, 0),
         set(state.finished, FALSE),
@@ -257,11 +242,11 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
         // Reset gesture and velocity from previous gesture
         set(this._gestureX, 0),
         set(this._velocityX, 0),
-        // When the animation finishes, stop the clock
+        // When spring animation finishes, stop the clock
         stopClock(this._clock),
         call([this._index], ([value]) => {
-          // If the index changed, and previous animation has finished, update state
-          this.props.onIndexChange(value);
+          // If the index changed, and previous spring was finished, update state
+          this.props.jumpToIndex(value);
         }),
       ]),
     ]);
@@ -279,7 +264,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
 
   _translateX = block([
     call([this._index], ([value]) => {
-      this._currentIndexValue = value;
+      this._currentIndex = value;
     }),
     cond(this._isListening, call([this._position], this._handlePositionChange)),
     onChange(
@@ -289,6 +274,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
         cond(clockRunning(this._clock), stopClock(this._clock)),
         // Update the index to trigger the transition
         set(this._index, this._nextIndex),
+        // Unset next index
         set(this._nextIndex, UNSET),
       ])
     ),
@@ -310,6 +296,7 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
       [
         set(this._isSwiping, FALSE),
         this._transitionTo(
+          // Calculate the next index
           cond(
             and(
               greaterThan(abs(this._gestureX), SWIPE_DISTANCE_MINIMUM),
@@ -319,8 +306,6 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
               )
             ),
             // For swipe gesture, to calculate the index, determine direction and add to index
-            // When the user swipes towards the left, we transition to the next tab
-            // When the user swipes towards the right, we transition to the previous tab
             round(
               min(
                 max(
@@ -334,25 +319,17 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
                         abs(this._gestureX),
                         this._swipeDistanceThreshold
                       ),
-                      // If gesture value exceeded the threshold, calculate direction from distance travelled
-                      cond(
-                        greaterThan(this._gestureX, 0),
-                        DIRECTION_LEFT,
-                        DIRECTION_RIGHT
-                      ),
+                      // If gesture value exceeded the threshold, calculate direction from distance
+                      cond(greaterThan(this._gestureX, 0), 1, -1),
                       // Otherwise calculate direction from the gesture velocity
-                      cond(
-                        greaterThan(this._velocityX, 0),
-                        DIRECTION_LEFT,
-                        DIRECTION_RIGHT
-                      )
+                      cond(greaterThan(this._velocityX, 0), 1, -1)
                     )
                   )
                 ),
                 sub(this._routesLength, 1)
               )
             ),
-            // Index didn't change/changed due to state update
+            // Otherwise index didn't change/changed due to state update
             this._index
           )
         ),
@@ -364,14 +341,9 @@ export default class Pager<T: Route> extends React.Component<Props<T>> {
   render() {
     const { layout, navigationState, swipeEnabled, children } = this.props;
 
-    // Make sure that the translation doesn't exceed the bounds to prevent overscrolling
     const translateX = min(
       max(
-        multiply(
-          this._layoutWidth,
-          sub(this._routesLength, 1),
-          DIRECTION_RIGHT
-        ),
+        multiply(this._layoutWidth, sub(this._routesLength, 1), -1),
         this._translateX
       ),
       0

@@ -1,7 +1,5 @@
 /* @flow */
 
-import Animated from 'react-native-reanimated';
-
 export type Route = { key: string } & $Shape<{
   icon?: string,
   title?: string,
@@ -10,26 +8,27 @@ export type Route = { key: string } & $Shape<{
   [key: string]: any,
 }>;
 
-export type Scene<T: Route> = {|
+export type Scene<T> = {
   route: T,
-|};
+};
 
 export type NavigationState<T: Route> = {
   index: number,
   routes: T[],
 };
 
-export type Layout = {|
+export type Layout = {
   width: number,
   height: number,
-|};
+};
 
 export type Listener = (value: number) => mixed;
 
-export type SceneRendererProps = {|
+export type SceneRendererProps<T: Route> = {
   layout: Layout,
-  position: Animated.Node<number>,
+  navigationState: NavigationState<T>,
+  position: any,
   jumpTo: (key: string) => void,
   addListener: (listener: Listener) => void,
   removeListener: (listener: Listener) => void,
-|};
+};
